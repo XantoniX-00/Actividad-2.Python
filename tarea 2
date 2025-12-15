@@ -1,0 +1,204 @@
+import sqlite3
+
+DB_NAME = 'biblioteca.db'
+
+class DBManager:
+    def __init__(self, db_name):
+        self.conn = sqlite3.connect(db_name)
+        self.cursor = self.conn.cursor()
+        self._create_table()
+
+    def _create_table(self):
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS libros (
+                id INTEGER PRIMARY KEY,
+                titulo TEXT NOT NULL,
+                autor TEXT NOT NULL,
+                genero TEXT,
+                leido BOOLEAN DEFAULT 0 CHECK (leido IN (0, 1))
+            )
+        """)
+        self.conn.commit()
+
+    def agregar_libro(self, titulo, autor, genero, leido):
+        try:
+            leido_val = 1 if leido.lower() == 'leido' else 0
+            self.cursor.execute("""
+                INSERT INTO libros (titulo, autor, genero, leido) 
+                VALUES (?, ?, ?, ?)
+            """, (titulo, autor, genero, leido_val))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError as e:
+            print(f"Error de integridad al agregar libro: {e}")
+            return False
+        except Exception as e:
+            print(f"Error inesperado al agregar libro: {e}")
+            return False
+
+    def obtener_todos_libros(self):
+        self.cursor.execute("SELECT id, titulo, autor, genero, leido FROM libros ORDER BY titulo")
+        return self.cursor.fetchall()
+
+    def buscar_libros(self, campo, valor):
+        if campo not in ['titulo', 'autor', 'genero']:
+            return []
+            
+        query = f"SELECT id, titulo, autor, genero, leido FROM libros WHERE {campo} LIKE ? ORDER BY titulo"
+        self.cursor.execute(query, ('%' + valor + '%',))
+        return self.cursor.fetchall()
+
+    def actualizar_libro(self, libro_id, campo, nuevo_valor):
+        if campo not in ['titulo', 'autor', 'genero', 'leido']:
+            return False
+        
+        if campo == 'leido':
+            nuevo_valor = 1 if nuevo_valor.lower() in ('leido', 'si', '1') else 0
+        
+        try:
+            self.cursor.execute(f"UPDATE libros SET {campo} = ? WHERE id = ?", (nuevo_valor, libro_id))
+            self.conn.commit()
+            return self.cursor.rowcount > 0
+        except sqlite3.IntegrityError as e:
+            print(f"Error de integridad al actualizar: {e}")
+            return False
+
+    def eliminar_libro(self, libro_id):
+        self.cursor.execute("DELETE FROM libros WHERE id = ?", (libro_id,))
+        self.conn.commit()
+        return self.cursor.rowcount > 0
+
+    def close(self):
+        self.conn.close()
+
+def mostrar_libro(libro):
+    leido_status = "✅ Leído" if libro[4] == 1 else "❌ No Leído"
+    print(f"| {libro[0]:<3} | {libro[1]:<30} | {libro[2]:<20} | {libro[3]:<15} | {leido_status:<10} |")
+
+def mostrar_listado(libros):
+    if not libros:
+        print("\n--- No se encontraron libros registrados. ---")
+        return
+    
+    print("\n" + "="*85)
+    print(f"| {'ID':<3} | {'TÍTULO':<30} | {'AUTOR':<20} | {'GÉNERO':<15} | {'ESTADO':<10} |")
+    print("="*85)
+    
+    for libro in libros:
+        mostrar_libro(libro)
+        
+    print("="*85)
+
+def gestionar_agregar_libro(db_manager):
+    print("\n--- AGREGAR NUEVO LIBRO ---")
+    titulo = input("Título: ").strip()
+    autor = input("Autor: ").strip()
+    genero = input("Género: ").strip()
+    leido = input("Estado de lectura (Leído/No Leído): ").strip()
+    
+    if not titulo or not autor:
+        print("ERROR: El Título y el Autor son obligatorios.")
+        return
+
+    if db_manager.agregar_libro(titulo, autor, genero, leido):
+        print(f"\n✅ Libro '{titulo}' de {autor} agregado exitosamente.")
+    else:
+        print("\n❌ Error al intentar agregar el libro.")
+
+def gestionar_actualizar_libro(db_manager):
+    libro_id = input("Ingrese el ID del libro a actualizar: ").strip()
+    if not libro_id.isdigit():
+        print("ERROR: El ID debe ser un número.")
+        return
+    
+    print("\n¿Qué campo desea modificar?")
+    print("1. Título")
+    print("2. Autor")
+    print("3. Género")
+    print("4. Estado (Leído/No Leído)")
+    
+    opcion = input("Seleccione la opción (1-4): ").strip()
+    
+    campos = {'1': 'titulo', '2': 'autor', '3': 'genero', '4': 'leido'}
+    if opcion not in campos:
+        print("ERROR: Opción no válida.")
+        return
+        
+    campo_a_modificar = campos[opcion]
+    nuevo_valor = input(f"Ingrese el nuevo valor para '{campo_a_modificar}': ").strip()
+
+    if db_manager.actualizar_libro(int(libro_id), campo_a_modificar, nuevo_valor):
+        print("\n✅ Libro actualizado exitosamente.")
+    else:
+        print("\n❌ Error: No se encontró el libro con ese ID o la actualización falló.")
+
+def gestionar_eliminar_libro(db_manager):
+    libro_id = input("Ingrese el ID del libro a eliminar: ").strip()
+    if not libro_id.isdigit():
+        print("ERROR: El ID debe ser un número.")
+        return
+
+    if db_manager.eliminar_libro(int(libro_id)):
+        print(f"\n🗑️ Libro con ID {libro_id} eliminado exitosamente.")
+    else:
+        print(f"\n❌ Error: No se encontró el libro con ID {libro_id}.")
+
+def gestionar_buscar_libros(db_manager):
+    print("\n--- BUSCAR LIBROS ---")
+    print("Buscar por:")
+    print("1. Título")
+    print("2. Autor")
+    print("3. Género")
+    
+    opcion = input("Seleccione la opción (1-3): ").strip()
+    campos = {'1': 'titulo', '2': 'autor', '3': 'genero'}
+    
+    if opcion not in campos:
+        print("ERROR: Opción no válida.")
+        return
+        
+    campo_busqueda = campos[opcion]
+    valor_busqueda = input(f"Ingrese el texto a buscar en '{campo_busqueda}': ").strip()
+    
+    libros = db_manager.buscar_libros(campo_busqueda, valor_busqueda)
+    mostrar_listado(libros)
+
+def mostrar_menu():
+    print("\n" + "="*30)
+    print("📚 BIBLIOTECA PERSONAL CLI")
+    print("="*30)
+    print("1. Agregar nuevo libro")
+    print("2. Actualizar información de un libro")
+    print("3. Eliminar libro existente")
+    print("4. Ver listado de libros")
+    print("5. Buscar libros (Título/Autor/Género)")
+    print("6. Salir")
+    print("="*30)
+
+def main():
+    db_manager = DBManager(DB_NAME)
+    
+    while True:
+        mostrar_menu()
+        opcion = input("Seleccione una opción: ").strip()
+        
+        if opcion == '1':
+            gestionar_agregar_libro(db_manager)
+        elif opcion == '2':
+            gestionar_actualizar_libro(db_manager)
+        elif opcion == '3':
+            gestionar_eliminar_libro(db_manager)
+        elif opcion == '4':
+            libros = db_manager.obtener_todos_libros()
+            mostrar_listado(libros)
+        elif opcion == '5':
+            gestionar_buscar_libros(db_manager)
+        elif opcion == '6':
+            print("\n👋 ¡Gracias por usar la Biblioteca Personal! ¡Hasta pronto!")
+            db_manager.close()
+            break
+        else:
+            print("\n⚠️ Opción no válida. Por favor, intente de nuevo.")
+
+if __name__ == '__main__':
+    main()
